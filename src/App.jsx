@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Wallet,
@@ -20,6 +20,7 @@ import {
   Landmark,
   Tags,
   Target,
+  Pencil,
 } from "lucide-react";
 import {
   LineChart,
@@ -51,7 +52,6 @@ const defaultCategories = [
   "Family",
   "Savings",
   "Investments",
-  "Other",
 ];
 
 const defaultIncomeTypes = ["Salary", "Side Income", "Bonus", "Allowance", "Rental Income", "Other"];
@@ -114,11 +114,21 @@ const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const pad = (value) => String(value).padStart(2, "0");
 const formatDate = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 const today = () => formatDate(new Date());
-const money = (value, currency = "R") =>
-  `${currency}${Number(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+
+function formatAmount(value) {
+  const number = Number(value || 0);
+  const sign = number < 0 ? "-" : "";
+  const [whole, decimal] = Math.abs(number).toFixed(2).split(".");
+  return `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, " ")}.${decimal}`;
+}
+
+function parseAmount(value) {
+  const normalized = String(value ?? "").replace(/\s+/g, "").replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+const money = (value, currency = "R") => `${currency}${formatAmount(value)}`;
 
 function cx(...classes) {
   return classes.filter(Boolean).join(" ");
@@ -126,6 +136,11 @@ function cx(...classes) {
 
 function uniqueList(items) {
   return [...new Set(items.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function normalizeCategories(categories) {
+  const next = uniqueList(categories || []).filter((category) => category !== "Other");
+  return next.length ? next : [...defaultCategories];
 }
 
 function getPalette(key) {
@@ -280,7 +295,7 @@ function normalizeRecurring(item) {
     id: item.id || uid(),
     kind,
     title: item.title || item.name || "",
-    amount: Number(item.amount || 0),
+    amount: parseAmount(item.amount),
     category: item.category || "Subscriptions",
     type: item.type || "Salary",
     startDate: item.startDate || item.date || today(),
@@ -325,7 +340,7 @@ function normalizeData(value) {
     contributions: Array.isArray(raw.contributions) ? raw.contributions : [],
     savings: Array.isArray(raw.savings) ? raw.savings.map(normalizeSavings) : [],
     savingsContributions: Array.isArray(raw.savingsContributions) ? raw.savingsContributions : [],
-    categories: Array.isArray(raw.categories) && raw.categories.length ? uniqueList(raw.categories) : [...defaultCategories],
+    categories: Array.isArray(raw.categories) && raw.categories.length ? normalizeCategories(raw.categories) : [...defaultCategories],
     incomeTypes: Array.isArray(raw.incomeTypes) && raw.incomeTypes.length ? uniqueList(raw.incomeTypes) : [...defaultIncomeTypes],
   };
 }
@@ -402,7 +417,7 @@ function Shell({ data, update, tab, setTab, children }) {
           <div className="min-w-0">
             <h1 className="text-xl font-black tracking-tight sm:text-2xl">BudgetFlow</h1>
             <p className="truncate text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Private budgeting for salary-cycle planning.
+              Helping you out budget the Flow-State.
             </p>
           </div>
           <button
@@ -505,7 +520,7 @@ function Dashboard({ data }) {
         .filter((item) => item.active)
         .map((item) => ({ ...item, next: nextDueDate(item.startDate, item.frequency, item.customDays) }))
         .sort((a, b) => a.next.localeCompare(b.next))
-        .slice(0, 5),
+        .slice(0, 8),
     [data.recurring],
   );
 
@@ -611,7 +626,7 @@ function Dashboard({ data }) {
                 key={item.id}
                 left={
                   <>
-                    <p className="font-semibold">{item.title}</p>
+                    <p className="font-semibold">{item.title || item.type || item.category || "Recurring item"}</p>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       {item.kind === "income" ? item.type : item.category} - Due {displayDate(item.next)}
                     </p>
@@ -758,7 +773,7 @@ function Transactions({ data, update }) {
     title: "",
     amount: "",
     date: today(),
-    category: data.categories[0] || "Other",
+    category: data.categories[0] || "Groceries",
     type: "Salary",
     notes: "",
   });
@@ -781,7 +796,7 @@ function Transactions({ data, update }) {
         draft.incomes.push({
           id: uid(),
           name: form.title.trim() || form.type,
-          amount: Number(form.amount),
+          amount: parseAmount(form.amount),
           date: form.date,
           type: form.type,
           notes: form.notes,
@@ -790,7 +805,7 @@ function Transactions({ data, update }) {
         draft.expenses.push({
           id: uid(),
           title: form.title.trim() || form.category,
-          amount: Number(form.amount),
+          amount: parseAmount(form.amount),
           date: form.date,
           category: form.category,
           paymentMethod: "Card",
@@ -799,7 +814,7 @@ function Transactions({ data, update }) {
       }
       return draft;
     });
-    setForm({ title: "", amount: "", date: today(), category: data.categories[0] || "Other", type: "Salary", notes: "" });
+    setForm({ title: "", amount: "", date: form.date, category: form.category, type: form.type, notes: "" });
   };
 
   const remove = (item) =>
@@ -814,7 +829,7 @@ function Transactions({ data, update }) {
       <Panel title="Add transaction">
         <Segment options={["expense", "income"]} value={kind} setValue={setKind} />
         <Input label="Details (optional)" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
-        <Input label="Amount" type="number" min="0" value={form.amount} onChange={(value) => setForm({ ...form, amount: value })} />
+        <AmountInput label="Amount" value={form.amount} onChange={(value) => setForm({ ...form, amount: value })} />
         <DateInput label="Date" value={form.date} onChange={(value) => setForm({ ...form, date: value })} />
         {kind === "expense" ? (
           <Select label="Category" value={form.category} options={data.categories} onChange={(value) => setForm({ ...form, category: value })} />
@@ -874,13 +889,14 @@ function Recurring({ data, update }) {
     kind: "expense",
     title: "",
     amount: "",
-    category: data.categories.includes("Subscriptions") ? "Subscriptions" : data.categories[0] || "Other",
+    category: data.categories.includes("Subscriptions") ? "Subscriptions" : data.categories[0] || "Groceries",
     type: "Salary",
     startDate: today(),
     frequency: "Monthly",
     customDays: 30,
     notes: "",
   });
+  const [editingId, setEditingId] = useState("");
 
   const recurringItems = useMemo(
     () =>
@@ -890,30 +906,72 @@ function Recurring({ data, update }) {
     [data.recurring],
   );
 
-  const add = () => {
-    if (!form.amount) return;
-    update((draft) => {
-      draft.recurring.push({
-        id: uid(),
-        ...form,
-        title: form.title.trim() || (form.kind === "income" ? form.type : form.category),
-        amount: Number(form.amount),
-        customDays: Number(form.customDays || 30),
-        active: true,
-      });
-      return draft;
-    });
+  const resetForm = () => {
     setForm({
       kind: form.kind,
       title: "",
       amount: "",
       category: form.category,
       type: form.type,
-      startDate: today(),
+      startDate: form.startDate,
       frequency: form.frequency,
       customDays: form.customDays,
       notes: "",
     });
+  };
+
+  const save = () => {
+    if (!form.amount) return;
+    update((draft) => {
+      const recurring = {
+        ...form,
+        title: form.title.trim() || (form.kind === "income" ? form.type : form.category),
+        amount: parseAmount(form.amount),
+        customDays: Number(form.customDays || 30),
+      };
+
+      if (editingId) {
+        draft.recurring = draft.recurring.map((item) =>
+          item.id === editingId
+            ? {
+                ...item,
+                ...recurring,
+                id: item.id,
+                active: item.active !== false,
+              }
+            : item,
+        );
+      } else {
+        draft.recurring.push({
+          id: uid(),
+          ...recurring,
+          active: true,
+        });
+      }
+      return draft;
+    });
+    setEditingId("");
+    resetForm();
+  };
+
+  const edit = (item) => {
+    setEditingId(item.id);
+    setForm({
+      kind: item.kind || "expense",
+      title: item.title || "",
+      amount: formatAmount(item.amount).replace(/\.00$/, ""),
+      category: item.category || data.categories[0] || "Groceries",
+      type: item.type || "Salary",
+      startDate: item.startDate || today(),
+      frequency: item.frequency || "Monthly",
+      customDays: item.customDays || 30,
+      notes: item.notes || "",
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId("");
+    resetForm();
   };
 
   const recordNow = (item) =>
@@ -922,7 +980,7 @@ function Recurring({ data, update }) {
         draft.incomes.push({
           id: uid(),
           name: item.title || item.type,
-          amount: Number(item.amount),
+          amount: parseAmount(item.amount),
           date: today(),
           type: item.type,
           notes: item.notes,
@@ -931,7 +989,7 @@ function Recurring({ data, update }) {
         draft.expenses.push({
           id: uid(),
           title: item.title || item.category,
-          amount: Number(item.amount),
+          amount: parseAmount(item.amount),
           date: today(),
           category: item.category,
           paymentMethod: "Recurring",
@@ -943,10 +1001,10 @@ function Recurring({ data, update }) {
 
   return (
     <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
-      <Panel title="Add recurring flow">
+      <Panel title={editingId ? "Edit recurring flow" : "Add recurring flow"}>
         <Segment options={["expense", "income"]} value={form.kind} setValue={(value) => setForm({ ...form, kind: value })} />
         <Input label="Name (optional)" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
-        <Input label="Amount" type="number" min="0" value={form.amount} onChange={(value) => setForm({ ...form, amount: value })} />
+        <AmountInput label="Amount" value={form.amount} onChange={(value) => setForm({ ...form, amount: value })} />
         {form.kind === "expense" ? (
           <Select label="Category" value={form.category} options={data.categories} onChange={(value) => setForm({ ...form, category: value })} />
         ) : (
@@ -958,9 +1016,16 @@ function Recurring({ data, update }) {
           <Input label="Custom days" type="number" min="1" value={form.customDays} onChange={(value) => setForm({ ...form, customDays: value })} />
         )}
         <Input label="Notes" value={form.notes} onChange={(value) => setForm({ ...form, notes: value })} />
-        <Button onClick={add}>
-          <Plus size={16} /> Add recurring
-        </Button>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button onClick={save}>
+            <Plus size={16} /> {editingId ? "Update recurring" : "Add recurring"}
+          </Button>
+          {editingId && (
+            <Button variant="secondary" onClick={cancelEdit}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </Panel>
 
       <Panel title="Recurring payments and income">
@@ -982,6 +1047,15 @@ function Recurring({ data, update }) {
                     {item.kind === "income" ? "+" : "-"}
                     {money(item.amount, data.settings.currency)}
                   </span>
+                  <button
+                    type="button"
+                    className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-xs font-bold text-[var(--accent-strong)] transition hover:opacity-85 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                    onClick={() => edit(item)}
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <Pencil size={13} /> Edit
+                    </span>
+                  </button>
                   <button
                     type="button"
                     className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-xs font-bold text-[var(--accent-strong)] transition hover:opacity-85 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
@@ -1053,9 +1127,9 @@ function Savings({ data, update }) {
       draft.savings.push({
         id: uid(),
         name: form.name.trim() || "Savings account",
-        currentBalance: Number(form.currentBalance || 0),
-        goal: Number(form.goal || 0),
-        monthlyTarget: Number(form.monthlyTarget || 0),
+        currentBalance: parseAmount(form.currentBalance),
+        goal: parseAmount(form.goal),
+        monthlyTarget: parseAmount(form.monthlyTarget),
         notes: form.notes,
       });
       return draft;
@@ -1068,7 +1142,7 @@ function Savings({ data, update }) {
     update((draft) => {
       const account = draft.savings.find((item) => item.id === selectedSavingsId);
       if (!account) return draft;
-      const amount = Number(movement.amount || 0);
+      const amount = parseAmount(movement.amount);
       const signedAmount = movement.direction === "withdrawal" ? -amount : amount;
       account.currentBalance = Math.max(0, Number(account.currentBalance || 0) + signedAmount);
       draft.savingsContributions.push({
@@ -1080,7 +1154,7 @@ function Savings({ data, update }) {
       });
       return draft;
     });
-    setMovement({ savingsId: selectedSavingsId, amount: "", date: today(), direction: movement.direction });
+    setMovement({ savingsId: selectedSavingsId, amount: "", date: movement.date, direction: movement.direction });
   };
 
   return (
@@ -1094,9 +1168,9 @@ function Savings({ data, update }) {
       <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
         <Panel title="Add savings account">
           <Input label="Account name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
-          <Input label="Current balance" type="number" min="0" value={form.currentBalance} onChange={(value) => setForm({ ...form, currentBalance: value })} />
-          <Input label="Goal amount" type="number" min="0" value={form.goal} onChange={(value) => setForm({ ...form, goal: value })} />
-          <Input label="Monthly target" type="number" min="0" value={form.monthlyTarget} onChange={(value) => setForm({ ...form, monthlyTarget: value })} />
+          <AmountInput label="Current balance" value={form.currentBalance} onChange={(value) => setForm({ ...form, currentBalance: value })} />
+          <AmountInput label="Goal amount" value={form.goal} onChange={(value) => setForm({ ...form, goal: value })} />
+          <AmountInput label="Monthly target" value={form.monthlyTarget} onChange={(value) => setForm({ ...form, monthlyTarget: value })} />
           <Input label="Notes" value={form.notes} onChange={(value) => setForm({ ...form, notes: value })} />
           <Button onClick={addSavings}>
             <Plus size={16} /> Add savings
@@ -1120,7 +1194,7 @@ function Savings({ data, update }) {
                 labels={{ deposit: "Deposit", withdrawal: "Withdrawal" }}
                 onChange={(value) => setMovement({ ...movement, direction: value })}
               />
-              <Input label="Amount" type="number" min="0" value={movement.amount} onChange={(value) => setMovement({ ...movement, amount: value })} />
+              <AmountInput label="Amount" value={movement.amount} onChange={(value) => setMovement({ ...movement, amount: value })} />
               <DateInput label="Date" value={movement.date} onChange={(value) => setMovement({ ...movement, date: value })} />
               <div className="md:col-span-4">
                 <Button onClick={recordMovement}>
@@ -1203,9 +1277,9 @@ function Investments({ data, update }) {
         id: uid(),
         ...form,
         name: form.name.trim(),
-        openingBalance: Number(form.openingBalance || 0),
-        currentBalance: Number(form.currentBalance || form.openingBalance || 0),
-        monthlyContribution: Number(form.monthlyContribution || 0),
+        openingBalance: parseAmount(form.openingBalance),
+        currentBalance: parseAmount(form.currentBalance || form.openingBalance),
+        monthlyContribution: parseAmount(form.monthlyContribution),
         annualReturn: Number(form.annualReturn || 0),
       });
       return draft;
@@ -1218,8 +1292,9 @@ function Investments({ data, update }) {
       const investmentId = contrib.investmentId || draft.investments[0]?.id;
       const investment = draft.investments.find((item) => item.id === investmentId);
       if (investment && contrib.amount) {
-        investment.currentBalance += Number(contrib.amount || 0);
-        draft.contributions.push({ id: uid(), ...contrib, investmentId, amount: Number(contrib.amount || 0) });
+        const amount = parseAmount(contrib.amount);
+        investment.currentBalance += amount;
+        draft.contributions.push({ id: uid(), ...contrib, investmentId, amount });
       }
       return draft;
     });
@@ -1244,9 +1319,9 @@ function Investments({ data, update }) {
         <Panel title="Add investment">
           <Input label="Name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
           <Select label="Type" value={form.type} options={defaultInvestmentTypes} onChange={(value) => setForm({ ...form, type: value })} />
-          <Input label="Opening balance" type="number" min="0" value={form.openingBalance} onChange={(value) => setForm({ ...form, openingBalance: value })} />
-          <Input label="Current balance" type="number" min="0" value={form.currentBalance} onChange={(value) => setForm({ ...form, currentBalance: value })} />
-          <Input label="Monthly contribution" type="number" min="0" value={form.monthlyContribution} onChange={(value) => setForm({ ...form, monthlyContribution: value })} />
+          <AmountInput label="Opening balance" value={form.openingBalance} onChange={(value) => setForm({ ...form, openingBalance: value })} />
+          <AmountInput label="Current balance" value={form.currentBalance} onChange={(value) => setForm({ ...form, currentBalance: value })} />
+          <AmountInput label="Monthly contribution" value={form.monthlyContribution} onChange={(value) => setForm({ ...form, monthlyContribution: value })} />
           <Input label="Expected return %" type="number" value={form.annualReturn} onChange={(value) => setForm({ ...form, annualReturn: value })} />
           <Button onClick={addInvestment}>
             <Plus size={16} /> Add investment
@@ -1310,13 +1385,13 @@ function Investments({ data, update }) {
               labels={Object.fromEntries(data.investments.map((item) => [item.id, item.name]))}
               onChange={(value) => setContrib({ ...contrib, investmentId: value })}
             />
-            <Input label="Amount" type="number" min="0" value={contrib.amount} onChange={(value) => setContrib({ ...contrib, amount: value })} />
+            <AmountInput label="Amount" value={contrib.amount} onChange={(value) => setContrib({ ...contrib, amount: value })} />
             <DateInput label="Date" value={contrib.date} onChange={(value) => setContrib({ ...contrib, date: value })} />
             <div className="md:pt-6">
               <Button
                 onClick={() => {
                   addContribution();
-                  setContrib({ investmentId: selectedInvestmentId, amount: "", date: today() });
+                  setContrib({ investmentId: selectedInvestmentId, amount: "", date: contrib.date });
                 }}
               >
                 <Plus size={16} /> Add
@@ -1548,17 +1623,12 @@ function Input({ label, value, onChange, type = "text", min }) {
   );
 }
 
-function DateInput({ label, value, onChange }) {
-  const [draft, setDraft] = useState(displayDate(value));
-
-  const commit = (nextValue) => {
-    const parsed = parseDisplayDate(nextValue);
-    if (!parsed) {
-      setDraft(displayDate(value));
-      return;
-    }
-    onChange(parsed);
-    setDraft(displayDate(parsed));
+function AmountInput({ label, value, onChange }) {
+  const commit = () => {
+    if (String(value).trim() === "") return;
+    const parsed = parseAmount(value);
+    const formatted = formatAmount(parsed).replace(/\.00$/, "");
+    onChange(formatted);
   };
 
   return (
@@ -1566,19 +1636,79 @@ function DateInput({ label, value, onChange }) {
       <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{label}</span>
       <input
         type="text"
-        inputMode="numeric"
-        placeholder="dd/mm/yyyy"
-        value={draft}
-        onBlur={() => commit(draft)}
-        onChange={(event) => {
-          const nextValue = event.target.value;
-          setDraft(nextValue);
-          const parsed = parseDisplayDate(nextValue);
-          if (parsed) onChange(parsed);
-        }}
+        inputMode="decimal"
+        value={value}
+        onBlur={commit}
+        onChange={(event) => onChange(event.target.value)}
         className="w-full rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-950 outline-none transition focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-50"
       />
     </label>
+  );
+}
+
+function DateInput({ label, value, onChange }) {
+  const pickerRef = useRef(null);
+  const [draftState, setDraftState] = useState({ source: value, draft: displayDate(value) });
+  const draft = draftState.source === value ? draftState.draft : displayDate(value);
+
+  const setDate = (nextValue) => {
+    onChange(nextValue);
+    setDraftState({ source: nextValue, draft: displayDate(nextValue) });
+  };
+
+  const commit = (nextValue) => {
+    const parsed = parseDisplayDate(nextValue);
+    if (!parsed) {
+      setDraftState({ source: value, draft: displayDate(value) });
+      return;
+    }
+    setDate(parsed);
+  };
+
+  const openPicker = () => {
+    if (pickerRef.current?.showPicker) pickerRef.current.showPicker();
+    else pickerRef.current?.click();
+  };
+
+  return (
+    <div className="block">
+      <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{label}</span>
+      <div className="relative">
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="dd/mm/yyyy"
+          value={draft}
+          onBlur={() => commit(draft)}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            setDraftState({ source: value, draft: nextValue });
+            const parsed = parseDisplayDate(nextValue);
+            if (parsed) onChange(parsed);
+          }}
+          className="w-full rounded-lg border border-zinc-200 bg-white p-3 pr-12 text-sm text-zinc-950 outline-none transition focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-50"
+        />
+        <button
+          type="button"
+          aria-label={`Choose ${label.toLowerCase()}`}
+          onClick={openPicker}
+          className="absolute right-1.5 top-1.5 grid h-9 w-9 place-items-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-[var(--accent-strong)] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+        >
+          <CalendarDays size={17} />
+        </button>
+        <input
+          ref={pickerRef}
+          tabIndex={-1}
+          aria-hidden="true"
+          type="date"
+          value={value}
+          onChange={(event) => {
+            if (event.target.value) setDate(event.target.value);
+          }}
+          className="pointer-events-none absolute right-1.5 top-1.5 h-9 w-9 opacity-0"
+        />
+      </div>
+    </div>
   );
 }
 
